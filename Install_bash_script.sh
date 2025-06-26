@@ -247,22 +247,15 @@ void ai_framegen_cleanup(struct pipe_context *ctx);
 #endif
 EOF
 
-# Патч для сборки системы
-echo "Применение патчей..."
-git apply << 'EOF'
-diff --git a/src/gallium/meson.build b/src/gallium/meson.build
-index a1b2c3d..d4e5f6g 755644
---- a/src/gallium/meson.build
-+++ b/src/gallium/meson.build
-@@ -100,6 +100,7 @@ subdir('drivers/r300')
- subdir('drivers/r600')
- subdir('drivers/radeonsi')
- subdir('drivers/virgl')
-+subdir('drivers/ai_framegen')
- 
- if with_dri
-   pipe_loader_dri_deps = [
-EOF
+# Прямое редактирование файла сборки вместо применения патча
+echo "Обновление файла сборки Gallium..."
+sed -i "/subdir('drivers\/virgl')/a subdir('drivers/ai_framegen')" src/gallium/meson.build
+
+# Проверяем, что изменение применилось
+if ! grep -q "subdir('drivers/ai_framegen')" src/gallium/meson.build; then
+    echo "Ошибка: Не удалось обновить src/gallium/meson.build"
+    exit 1
+fi
 
 # Сборка Mesa
 echo "Конфигурация сборки..."
