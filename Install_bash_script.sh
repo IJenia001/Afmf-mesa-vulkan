@@ -23,7 +23,7 @@ apt install -y build-essential git meson ninja-build cmake pkg-config \
     libdrm-dev zlib1g-dev libelf-dev libssl-dev libclang-dev \
     python3-pip python3-mako libffi-dev libxml2-dev \
     libopenblas-dev ocl-icd-opencl-dev clang \
-    vulkan-tools wget curl unzip
+    vulkan-tools wget curl unzip gawk
 
 # Создание рабочих директорий
 WORK_DIR="/opt/mesa_ai_build"
@@ -92,7 +92,34 @@ cd mesa-25.0.3
 # Регистрация нового драйвера в системе сборки Mesa
 echo "Регистрация AI Frame Generation драйвера в Mesa..."
 
-# 1. Добавляем опцию для драйвера в meson_options.txt
+# 1. Полностью заменяем опции platforms, gallium-drivers и vulkan-drivers
+NEW_OPTIONS=$(cat << 'EOF'
+option('platforms',
+        type : 'array',
+        value : ['x11', 'wayland'],
+        description : 'Platforms to support. Available: x11, wayland, drm, haiku, windows, android, surfaceless')
+
+option('gallium-drivers',
+        type : 'array',
+        choices : ['auto', 'radeonsi', 'r300', 'r600', 'nouveau', 'freedreno', 'swrast', 'v3d', 'vc4', 'etnaviv', 'tegra', 'i915', 'svga', 'virgl', 'panfrost', 'iris', 'lima', 'zink', 'd3d12', 'asahi', 'crocus', 'all', 'softpipe', 'llvmpipe', 'ai'],
+        description : 'List of gallium drivers to build. If this is set to auto, all drivers applicable to the target OS/architecture will be built.')
+
+option('vulkan-drivers',
+        type : 'array',
+        choices : ['auto', 'amd', 'broadcom', 'freedreno', 'intel', 'intel_hasvk', 'lavapipe', 'microsoft-experimental', 'nouveau', 'nvidia', 'swrast', 'virtio-experimental', 'all'],
+        description : 'Vulkan drivers to build, including autodetect based on the gallium driver selection')
+EOF
+)
+
+# Заменяем секцию опций
+awk -v new_options="$NEW_OPTIONS" '
+    /option\(.platforms.,/ {in_section=1; print new_options; skip=1}
+    /option\(.vulkan-drivers.,/ {in_section=0}
+    !in_section && !skip {print}
+    skip && /\)/ {skip=0}
+' meson_options.txt > meson_options.txt.tmp && mv meson_options.txt.tmp meson_options.txt
+
+# 2. Добавляем опцию для нашего драйвера
 if ! grep -q "option('ai-framegen'" meson_options.txt; then
     cat >> meson_options.txt << 'EOF'
 
@@ -103,10 +130,7 @@ option('ai-framegen',
 EOF
 fi
 
-# 2. Добавляем драйвер в список Gallium
-sed -i "/option('gallium-drivers',/a \  'ai'," meson_options.txt
-
-# 3. Добавляем зависимость для драйвера
+# 3. Добавляем зависимость для драйвера в DRI систему
 sed -i "/'zink': _zink_deps,/a \  'ai': [idep_mesautil, driver_ai]," src/gallium/targets/dri/meson.build
 
 # Создание файлов драйвера AI Frame Generation
