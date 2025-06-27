@@ -23,7 +23,7 @@ apt install -y build-essential git meson ninja-build cmake pkg-config \
     libdrm-dev zlib1g-dev libelf-dev libssl-dev libclang-dev \
     python3-pip python3-mako libffi-dev libxml2-dev \
     libopenblas-dev ocl-icd-opencl-dev clang \
-    vulkan-tools wget curl unzip gawk
+    vulkan-tools wget curl unzip gawk libglvnd-dev libglvnd-core-dev
 
 # Создание рабочих директорий
 WORK_DIR="/opt/mesa_ai_build"
