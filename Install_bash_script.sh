@@ -92,32 +92,57 @@ cd mesa-25.0.3
 # Регистрация нового драйвера в системе сборки Mesa
 echo "Регистрация AI Frame Generation драйвера в Mesa..."
 
-# 1. Полностью заменяем опции platforms, gallium-drivers и vulkan-drivers
-NEW_OPTIONS=$(cat << 'EOF'
-option('platforms',
-        type : 'array',
-        value : ['x11', 'wayland'],
-        description : 'Platforms to support. Available: x11, wayland, drm, haiku, windows, android, surfaceless')
+# 1. ПРАВИЛЬНОЕ редактирование meson_options.txt для добавления "ai" драйвера
+echo "Редактирование meson_options.txt..."
 
-option('gallium-drivers',
-        type : 'array',
-        choices : ['auto', 'radeonsi', 'r300', 'r600', 'nouveau', 'freedreno', 'swrast', 'v3d', 'vc4', 'etnaviv', 'tegra', 'i915', 'svga', 'virgl', 'panfrost', 'iris', 'lima', 'zink', 'd3d12', 'asahi', 'crocus', 'all', 'softpipe', 'llvmpipe', 'ai'],
-        description : 'List of gallium drivers to build. If this is set to auto, all drivers applicable to the target OS/architecture will be built.')
+# Создаем резервную копию
+cp meson_options.txt meson_options.txt.backup
 
-option('vulkan-drivers',
-        type : 'array',
-        choices : ['auto', 'amd', 'broadcom', 'freedreno', 'intel', 'intel_hasvk', 'lavapipe', 'microsoft-experimental', 'nouveau', 'nvidia', 'swrast', 'virtio-experimental', 'all'],
-        description : 'Vulkan drivers to build, including autodetect based on the gallium driver selection')
-EOF
-)
+# Находим строку с gallium-drivers и добавляем 'ai' в список choices
+sed -i "/option('gallium-drivers'/,/description/ {
+    s/choices : \[/choices : [/
+    s/\('llvmpipe'\)/\1, 'ai'/
+}" meson_options.txt
 
-# Заменяем секцию опций
-awk -v new_options="$NEW_OPTIONS" '
-    /option\(.platforms.,/ {in_section=1; print new_options; skip=1}
-    /option\(.vulkan-drivers.,/ {in_section=0}
-    !in_section && !skip {print}
-    skip && /\)/ {skip=0}
-' meson_options.txt > meson_options.txt.tmp && mv meson_options.txt.tmp meson_options.txt
+# Проверяем, что изменение применилось
+if ! grep -q "'ai'" meson_options.txt; then
+    echo "Предупреждение: Автоматическое редактирование не удалось. Применяем ручное редактирование..."
+    
+    # Альтернативный подход - полная замена строки
+    python3 -c "
+import re
+with open('meson_options.txt', 'r') as f:
+    content = f.read()
+
+# Находим секцию gallium-drivers и заменяем choices
+pattern = r\"(option\('gallium-drivers',.*?choices : \[)([^\]]+)(\].*?description)\"
+def replace_choices(match):
+    start = match.group(1)
+    choices = match.group(2)
+    end = match.group(3)
+    
+    # Добавляем 'ai' если его нет
+    if \"'ai'\" not in choices:
+        choices = choices.rstrip() + \", 'ai'\"
+    
+    return start + choices + end
+
+content = re.sub(pattern, replace_choices, content, flags=re.DOTALL)
+
+with open('meson_options.txt', 'w') as f:
+    f.write(content)
+"
+fi
+
+# Финальная проверка
+if ! grep -q "'ai'" meson_options.txt; then
+    echo "ОШИБКА: Не удалось добавить 'ai' драйвер в meson_options.txt"
+    echo "Содержимое секции gallium-drivers:"
+    grep -A 5 -B 5 "gallium-drivers" meson_options.txt
+    exit 1
+fi
+
+echo "Успешно добавлен 'ai' драйвер в список gallium-drivers"
 
 # 2. Добавляем опцию для нашего драйвера
 if ! grep -q "option('ai-framegen'" meson_options.txt; then
@@ -130,14 +155,44 @@ option('ai-framegen',
 EOF
 fi
 
-# 3. Добавляем зависимость для драйвера в DRI систему
-sed -i "/'zink': _zink_deps,/a \  'ai': [idep_mesautil, driver_ai]," src/gallium/targets/dri/meson.build
-
 # Создание файлов драйвера AI Frame Generation
 echo "Создание AI Frame Generation драйвера..."
 
 # Создание директории драйвера
 mkdir -p src/gallium/drivers/ai_framegen
+
+# Файл: src/gallium/drivers/ai_framegen/ai_framegen.h
+cat > src/gallium/drivers/ai_framegen/ai_framegen.h << 'EOF'
+#ifndef AI_FRAMEGEN_H
+#define AI_FRAMEGEN_H
+
+#include "pipe/p_context.h"
+#include "pipe/p_state.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct frame {
+    unsigned width;
+    unsigned height;
+    void* data;
+};
+
+struct ai_framegen {
+    void (*set_generated_frame)(struct pipe_context *ctx, struct frame *frame);
+    void (*generate_frame)(struct pipe_context *ctx, struct frame *prev, struct frame *current);
+};
+
+void ai_framegen_create(struct pipe_context *ctx);
+void ai_framegen_destroy(struct pipe_context *ctx);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+EOF
 
 # Файл: src/gallium/drivers/ai_framegen/ai_framegen.c
 cat > src/gallium/drivers/ai_framegen/ai_framegen.c << 'EOF'
@@ -270,8 +325,7 @@ libai_framegen = static_library(
   include_directories: [
     inc_include, inc_src, inc_gallium, inc_gallium_aux, inc_util, tflite_inc
   ],
-  dependencies: [dep_dl, dep_threads, idep_nir_headers],
-  link_args: ['-ltensorflowlite'],
+  dependencies: [dep_dl, dep_threads, idep_nir_headers, tflite_lib],
   c_args: [c_vis_args],
   gnu_symbol_visibility: 'hidden',
 )
@@ -282,44 +336,13 @@ driver_ai = declare_dependency(
 )
 EOF
 
-# Файл: src/gallium/include/pipe/p_ai_framegen.h
-mkdir -p src/gallium/include/pipe
-cat > src/gallium/include/pipe/p_ai_framegen.h << 'EOF'
-#ifndef P_AI_FRAMEGEN_H
-#define P_AI_FRAMEGEN_H
-
-#include "pipe/p_context.h"
-#include "pipe/p_state.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-struct ai_model;
-struct frame {
-    unsigned width;
-    unsigned height;
-    void* data;
-};
-
-struct ai_framegen {
-    void (*set_generated_frame)(struct pipe_context *ctx, struct frame *frame);
-    void (*generate_frame)(struct pipe_context *ctx, struct frame *prev, struct frame *current);
-};
-
-void ai_framegen_init(struct pipe_context *ctx);
-void ai_framegen_cleanup(struct pipe_context *ctx);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif
-EOF
-
-# Прямое редактирование файла сборки вместо применения патча
+# Обновление основного meson.build для добавления нашего драйвера
 echo "Обновление файла сборки Gallium..."
-sed -i "/subdir('drivers\/virgl')/a subdir('drivers/ai_framegen')" src/gallium/meson.build
+
+# Добавляем подкаталог нашего драйвера
+if ! grep -q "subdir('drivers/ai_framegen')" src/gallium/meson.build; then
+    sed -i "/subdir('drivers\/virgl')/a subdir('drivers/ai_framegen')" src/gallium/meson.build
+fi
 
 # Проверяем, что изменение применилось
 if ! grep -q "subdir('drivers/ai_framegen')" src/gallium/meson.build; then
@@ -327,9 +350,14 @@ if ! grep -q "subdir('drivers/ai_framegen')" src/gallium/meson.build; then
     exit 1
 fi
 
+# Добавляем зависимость в DRI цель
+if ! grep -q "'ai': \[" src/gallium/targets/dri/meson.build; then
+    sed -i "/'zink': _zink_deps,/a \  'ai': [idep_mesautil, driver_ai]," src/gallium/targets/dri/meson.build
+fi
+
 # Сборка Mesa
 echo "Конфигурация сборки..."
-mkdir build
+mkdir -p build
 cd build
 
 meson setup .. \
@@ -390,18 +418,28 @@ udevadm control --reload-rules
 udevadm trigger
 
 # Добавление пользователя в группу video
-usermod -aG video $SUDO_USER
+if [ -n "$SUDO_USER" ]; then
+    usermod -aG video $SUDO_USER
+fi
 
 # Тест установки
 echo "Проверка установки..."
-if [ -f /usr/local/lib/dri/ai_framegen_dri.so ]; then
+if [ -f /usr/local/lib/dri/ai_dri.so ]; then
     echo "Успех: AI Frame Generation установлен!"
-    echo "Путь к драйверу: /usr/local/lib/dri/ai_framegen_dri.so"
+    echo "Путь к драйверу: /usr/local/lib/dri/ai_dri.so"
 else
     echo "Ошибка: Драйвер не найден!"
+    echo "Проверка наличия других файлов драйвера..."
+    ls -la /usr/local/lib/dri/*ai* 2>/dev/null || echo "Файлы ai драйвера не найдены"
     exit 1
 fi
 
 echo "Для применения настроек перезагрузите систему."
 echo "Для использования в Steam добавьте в параметры запуска:"
 echo "MESA_AI_FRAMEGEN=1 %command%"
+
+echo ""
+echo "Отладочная информация:"
+echo "- Проверьте логи сборки: /opt/mesa_ai_build/mesa-25.0.3/build/meson-logs/"
+echo "- Проверьте драйверы: ls -la /usr/local/lib/dri/"
+echo "- Проверьте модель: ls -la $MODEL_DIR/"
