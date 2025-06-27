@@ -23,7 +23,8 @@ apt install -y build-essential git meson ninja-build cmake pkg-config \
     libdrm-dev zlib1g-dev libelf-dev libssl-dev libclang-dev \
     python3-pip python3-mako libffi-dev libxml2-dev \
     libopenblas-dev ocl-icd-opencl-dev clang \
-    vulkan-tools wget curl unzip gawk libglvnd-dev libglvnd-core-dev
+    vulkan-tools wget curl unzip gawk \
+    libglvnd-dev libegl-dev libgles2-mesa-dev
 
 # Создание рабочих директорий
 WORK_DIR="/opt/mesa_ai_build"
@@ -39,45 +40,55 @@ TFLITE_DIR="/opt/tflite"
 mkdir -p $TFLITE_DIR
 cd $TFLITE_DIR
 
-# Удаляем предыдущую сборку, если существует
-if [ -d "tensorflow-${TFLITE_VERSION}" ]; then
-    echo "Удаление предыдущей сборки TensorFlow..."
-    rm -rf "tensorflow-${TFLITE_VERSION}"
+# Проверка наличия уже установленной библиотеки
+if [ ! -f "/usr/local/lib/libtensorflowlite.so" ]; then
+    # Удаляем предыдущую сборку, если существует
+    if [ -d "tensorflow-${TFLITE_VERSION}" ]; then
+        echo "Удаление предыдущей сборки TensorFlow..."
+        rm -rf "tensorflow-${TFLITE_VERSION}"
+    fi
+
+    wget -q https://github.com/tensorflow/tensorflow/archive/refs/tags/v${TFLITE_VERSION}.tar.gz -O tensorflow.tar.gz
+    tar xf tensorflow.tar.gz
+    cd tensorflow-${TFLITE_VERSION}
+
+    # Удаляем предыдущую сборку tflite
+    if [ -d "tflite_build" ]; then
+        echo "Удаление предыдущей сборки tflite..."
+        rm -rf tflite_build
+    fi
+
+    mkdir tflite_build
+    cd tflite_build
+
+    cmake ../tensorflow/lite/c \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DTFLITE_ENABLE_XNNPACK=OFF \
+        -DTFLITE_ENABLE_GPU=OFF \
+        -DTFLITE_ENABLE_NNAPI=OFF
+
+    echo "Компиляция TensorFlow Lite (это займет 15-30 минут)..."
+    cmake --build . -j$(nproc)
+
+    echo "Установка TensorFlow Lite..."
+    cp libtensorflowlite_c.so /usr/local/lib/libtensorflowlite.so
+    cp -r ../tensorflow/lite/c /usr/local/include/tensorflow/
+    ldconfig
+else
+    echo "TensorFlow Lite уже установлен, пропускаем сборку."
 fi
-
-wget -q https://github.com/tensorflow/tensorflow/archive/refs/tags/v${TFLITE_VERSION}.tar.gz -O tensorflow.tar.gz
-tar xf tensorflow.tar.gz
-cd tensorflow-${TFLITE_VERSION}
-
-# Удаляем предыдущую сборку tflite
-if [ -d "tflite_build" ]; then
-    echo "Удаление предыдущей сборки tflite..."
-    rm -rf tflite_build
-fi
-
-mkdir tflite_build
-cd tflite_build
-
-cmake ../tensorflow/lite/c \
-    -DCMAKE_C_COMPILER=clang \
-    -DCMAKE_CXX_COMPILER=clang++ \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=ON \
-    -DTFLITE_ENABLE_XNNPACK=OFF \
-    -DTFLITE_ENABLE_GPU=OFF \
-    -DTFLITE_ENABLE_NNAPI=OFF
-
-echo "Компиляция TensorFlow Lite (это займет 15-30 минут)..."
-cmake --build . -j$(nproc)
-
-echo "Установка TensorFlow Lite..."
-cp libtensorflowlite_c.so /usr/local/lib/libtensorflowlite.so
-cp -r ../tensorflow/lite/c /usr/local/include/tensorflow/
-ldconfig
 
 # Скачивание и распаковка Mesa
 echo "Скачивание Mesa 25.0.3..."
 cd $WORK_DIR
+
+# Проверка наличия архива Mesa
+if [ ! -f "mesa-25.0.3.tar.xz" ]; then
+    wget -q https://archive.mesa3d.org//mesa-25.0.3.tar.xz
+fi
 
 # Удаляем предыдущую сборку Mesa, если существует
 if [ -d "mesa-25.0.3" ]; then
@@ -85,96 +96,60 @@ if [ -d "mesa-25.0.3" ]; then
     rm -rf mesa-25.0.3
 fi
 
-wget -q https://archive.mesa3d.org//mesa-25.0.3.tar.xz
 tar xf mesa-25.0.3.tar.xz
 cd mesa-25.0.3
 
 # Регистрация нового драйвера в системе сборки Mesa
 echo "Регистрация AI Frame Generation драйвера в Mesa..."
 
-# 1. ПРАВИЛЬНОЕ редактирование meson_options.txt для добавления "ai" драйвера
+# 1. Редактирование meson_options.txt для добавления "ai" драйвера
 echo "Редактирование meson_options.txt..."
 
 # Создаем резервную копию
 cp meson_options.txt meson_options.txt.backup
 
-# Более простой и надежный подход - добавляем 'ai' к последней строке choices
-# Находим строку с 'virgl' и добавляем к ней 'ai'
-sed -i "s/'virgl',/'virgl', 'ai',/" meson_options.txt
+# Надежный способ добавления драйвера с помощью Python
+python3 << 'FIX_MESON_OPTIONS'
+import re
 
-# Проверяем, что изменение применилось
-if ! grep -q "'ai'" meson_options.txt; then
-    echo "Предупреждение: Первый способ не сработал. Пробуем найти другой паттерн..."
-    
-    # Попробуем найти конец списка и добавить 'ai' туда
-    if grep -q "'panfrost'" meson_options.txt; then
-        sed -i "s/'panfrost',/'panfrost', 'ai',/" meson_options.txt
-    elif grep -q "'lima'" meson_options.txt; then
-        sed -i "s/'lima',/'lima', 'ai',/" meson_options.txt  
-    elif grep -q "'zink'" meson_options.txt; then
-        sed -i "s/'zink',/'zink', 'ai',/" meson_options.txt
-    elif grep -q "'d3d12'" meson_options.txt; then
-        sed -i "s/'d3d12',/'d3d12', 'ai',/" meson_options.txt
-    else
-        # Последний вариант - добавляем перед закрывающей скобкой
-        sed -i "/choices : \[/,/\]/ s/\]/,'ai'\]/" meson_options.txt
-    fi
-fi
-
-# Финальная проверка
-if ! grep -q "'ai'" meson_options.txt; then
-    echo "ОШИБКА: Не удалось добавить 'ai' драйвер в meson_options.txt"
-    echo "Содержимое секции gallium-drivers:"
-    grep -A 10 -B 5 "gallium-drivers" meson_options.txt
-    echo ""
-    echo "Попробуем ручное редактирование..."
-    
-    # Создаем временный файл с исправленным содержимым
-    python3 << 'MANUAL_FIX'
 with open('meson_options.txt', 'r') as f:
-    lines = f.readlines()
+    content = f.read()
 
-new_lines = []
-in_gallium_section = False
-choices_section = False
+# Поиск секции gallium-drivers
+pattern = r"option\('gallium-drivers',\s*type\s*:\s*'array',\s*value\s*:\s*\[([^\]]*)\]"
+match = re.search(pattern, content)
 
-for line in lines:
-    if "option(" in line and "gallium-drivers" in line:
-        in_gallium_section = True
-        new_lines.append(line)
-    elif in_gallium_section and "choices : [" in line:
-        choices_section = True
-        new_lines.append(line)
-    elif in_gallium_section and choices_section and "]" in line and "choices" not in line:
-        # Найдена закрывающая скобка списка choices
-        # Добавляем 'ai' перед закрывающей скобкой
-        if "'ai'" not in line:
-            line = line.replace("]", ", 'ai']")
-        new_lines.append(line)
-        in_gallium_section = False
-        choices_section = False
-    else:
-        new_lines.append(line)
-
-with open('meson_options.txt', 'w') as f:
-    f.writelines(new_lines)
-
-print("Ручное редактирование завершено")
-MANUAL_FIX
+if match:
+    drivers_list = match.group(1).strip()
+    # Удаляем кавычки и пробелы
+    drivers = [d.strip().strip("'") for d in drivers_list.split(',') if d.strip()]
     
-    # Еще одна проверка
-    if ! grep -q "'ai'" meson_options.txt; then
-        echo "КРИТИЧЕСКАЯ ОШИБКА: Не удалось добавить 'ai' в meson_options.txt"
-        echo "Попробуйте отредактировать файл вручную:"
-        echo "1. Откройте файл: nano $WORK_DIR/mesa-25.0.3/meson_options.txt"
-        echo "2. Найдите секцию 'gallium-drivers'"
-        echo "3. Добавьте 'ai' в список choices"
-        echo "4. Сохраните и продолжите выполнение скрипта"
-        read -p "Нажмите Enter после ручного редактирования..."
-    fi
-fi
-
-echo "Успешно добавлен 'ai' драйвер в список gallium-drivers"
+    # Добавляем 'ai' если его нет
+    if 'ai' not in drivers:
+        drivers.append('ai')
+        new_drivers = ", ".join([f"'{d}'" for d in drivers])
+        new_content = content.replace(match.group(0), match.group(0).replace(match.group(1), new_drivers))
+        
+        with open('meson_options.txt', 'w') as f:
+            f.write(new_content)
+        print("Успешно добавлен 'ai' драйвер в список gallium-drivers")
+    else:
+        print("Драйвер 'ai' уже присутствует в списке")
+else:
+    print("ОШИБКА: Не удалось найти секцию gallium-drivers в meson_options.txt")
+    print("Попробуем альтернативный метод...")
+    
+    # Альтернативный метод - добавляем в конец файла
+    with open('meson_options.txt', 'a') as f:
+        f.write("\n")
+        f.write("option('gallium-drivers',\n")
+        f.write("    type: 'array',\n")
+        f.write("    value: [],\n")
+        f.write("    description: 'List of gallium drivers to build',\n")
+        f.write("    choices: ['auto', 'i915', 'iris', 'crocus', 'nouveau', 'r300', 'r600', 'radeonsi', 'freedreno', 'tegra', 'v3d', 'vc4', 'virgl', 'etnaviv', 'panfrost', 'lima', 'zink', 'swrast', 'd3d12', 'ai'],\n")
+        f.write(")\n")
+    print("Добавлена новая опция gallium-drivers с драйвером 'ai'")
+FIX_MESON_OPTIONS
 
 # 2. Добавляем опцию для нашего драйвера
 if ! grep -q "option('ai-framegen'" meson_options.txt; then
@@ -389,18 +364,21 @@ fi
 
 # Сборка Mesa
 echo "Конфигурация сборки..."
-mkdir -p build
+# Удаляем предыдущую сборку
+rm -rf build
+mkdir build
 cd build
 
+# Исправленная команда сборки с отключенными VDPAU и VA-API
 meson setup .. \
     -Dprefix=/usr/local \
     -Dbuildtype=release \
     -Dplatforms=x11,wayland \
     -Dgallium-drivers=swrast,zink,ai \
     -Dvulkan-drivers=swrast \
-    -Dgallium-extra-hud=true \
-    -Dgallium-vdpau=enabled \
-    -Dgallium-va=enabled \
+    -Dgallium-extra-hud=false \
+    -Dgallium-vdpau=disabled \
+    -Dgallium-va=disabled \
     -Dgallium-opencl=disabled \
     -Dglvnd=enabled \
     -Dglx=disabled \
@@ -409,7 +387,7 @@ meson setup .. \
     -Dgles2=enabled \
     -Dopengl=true \
     -Dshared-glapi=enabled \
-    -Dllvm=disabled \
+    -Dllvm=true \
     -Dvalgrind=disabled \
     -Dtools=[] \
     -Dai-framegen=enabled
