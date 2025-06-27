@@ -98,48 +98,80 @@ echo "Редактирование meson_options.txt..."
 # Создаем резервную копию
 cp meson_options.txt meson_options.txt.backup
 
-# Находим строку с gallium-drivers и добавляем 'ai' в список choices
-sed -i "/option('gallium-drivers'/,/description/ {
-    s/choices : \[/choices : [/
-    s/\('llvmpipe'\)/\1, 'ai'/
-}" meson_options.txt
+# Более простой и надежный подход - добавляем 'ai' к последней строке choices
+# Находим строку с 'virgl' и добавляем к ней 'ai'
+sed -i "s/'virgl',/'virgl', 'ai',/" meson_options.txt
 
 # Проверяем, что изменение применилось
 if ! grep -q "'ai'" meson_options.txt; then
-    echo "Предупреждение: Автоматическое редактирование не удалось. Применяем ручное редактирование..."
+    echo "Предупреждение: Первый способ не сработал. Пробуем найти другой паттерн..."
     
-    # Альтернативный подход - полная замена строки
-    python3 -c "
-import re
-with open('meson_options.txt', 'r') as f:
-    content = f.read()
-
-# Находим секцию gallium-drivers и заменяем choices
-pattern = r\"(option\('gallium-drivers',.*?choices : \[)([^\]]+)(\].*?description)\"
-def replace_choices(match):
-    start = match.group(1)
-    choices = match.group(2)
-    end = match.group(3)
-    
-    # Добавляем 'ai' если его нет
-    if \"'ai'\" not in choices:
-        choices = choices.rstrip() + \", 'ai'\"
-    
-    return start + choices + end
-
-content = re.sub(pattern, replace_choices, content, flags=re.DOTALL)
-
-with open('meson_options.txt', 'w') as f:
-    f.write(content)
-"
+    # Попробуем найти конец списка и добавить 'ai' туда
+    if grep -q "'panfrost'" meson_options.txt; then
+        sed -i "s/'panfrost',/'panfrost', 'ai',/" meson_options.txt
+    elif grep -q "'lima'" meson_options.txt; then
+        sed -i "s/'lima',/'lima', 'ai',/" meson_options.txt  
+    elif grep -q "'zink'" meson_options.txt; then
+        sed -i "s/'zink',/'zink', 'ai',/" meson_options.txt
+    elif grep -q "'d3d12'" meson_options.txt; then
+        sed -i "s/'d3d12',/'d3d12', 'ai',/" meson_options.txt
+    else
+        # Последний вариант - добавляем перед закрывающей скобкой
+        sed -i "/choices : \[/,/\]/ s/\]/,'ai'\]/" meson_options.txt
+    fi
 fi
 
 # Финальная проверка
 if ! grep -q "'ai'" meson_options.txt; then
     echo "ОШИБКА: Не удалось добавить 'ai' драйвер в meson_options.txt"
     echo "Содержимое секции gallium-drivers:"
-    grep -A 5 -B 5 "gallium-drivers" meson_options.txt
-    exit 1
+    grep -A 10 -B 5 "gallium-drivers" meson_options.txt
+    echo ""
+    echo "Попробуем ручное редактирование..."
+    
+    # Создаем временный файл с исправленным содержимым
+    python3 << 'MANUAL_FIX'
+with open('meson_options.txt', 'r') as f:
+    lines = f.readlines()
+
+new_lines = []
+in_gallium_section = False
+choices_section = False
+
+for line in lines:
+    if "option(" in line and "gallium-drivers" in line:
+        in_gallium_section = True
+        new_lines.append(line)
+    elif in_gallium_section and "choices : [" in line:
+        choices_section = True
+        new_lines.append(line)
+    elif in_gallium_section and choices_section and "]" in line and "choices" not in line:
+        # Найдена закрывающая скобка списка choices
+        # Добавляем 'ai' перед закрывающей скобкой
+        if "'ai'" not in line:
+            line = line.replace("]", ", 'ai']")
+        new_lines.append(line)
+        in_gallium_section = False
+        choices_section = False
+    else:
+        new_lines.append(line)
+
+with open('meson_options.txt', 'w') as f:
+    f.writelines(new_lines)
+
+print("Ручное редактирование завершено")
+MANUAL_FIX
+    
+    # Еще одна проверка
+    if ! grep -q "'ai'" meson_options.txt; then
+        echo "КРИТИЧЕСКАЯ ОШИБКА: Не удалось добавить 'ai' в meson_options.txt"
+        echo "Попробуйте отредактировать файл вручную:"
+        echo "1. Откройте файл: nano $WORK_DIR/mesa-25.0.3/meson_options.txt"
+        echo "2. Найдите секцию 'gallium-drivers'"
+        echo "3. Добавьте 'ai' в список choices"
+        echo "4. Сохраните и продолжите выполнение скрипта"
+        read -p "Нажмите Enter после ручного редактирования..."
+    fi
 fi
 
 echo "Успешно добавлен 'ai' драйвер в список gallium-drivers"
@@ -366,18 +398,17 @@ meson setup .. \
     -Dplatforms=x11,wayland \
     -Dgallium-drivers=swrast,zink,ai \
     -Dvulkan-drivers=swrast \
-    -Ddri-drivers=swrast \
     -Dgallium-extra-hud=true \
     -Dgallium-vdpau=enabled \
     -Dgallium-va=enabled \
     -Dgallium-opencl=disabled \
-    -Dglvnd=true \
+    -Dglvnd=enabled \
     -Dglx=disabled \
     -Degl=enabled \
     -Dgbm=enabled \
     -Dgles2=enabled \
     -Dopengl=true \
-    -Dshared-glapi=true \
+    -Dshared-glapi=enabled \
     -Dllvm=disabled \
     -Dvalgrind=disabled \
     -Dtools=[] \
