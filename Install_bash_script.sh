@@ -32,9 +32,21 @@ TFLITE_DIR="/opt/tflite"
 mkdir -p $TFLITE_DIR
 cd $TFLITE_DIR
 
+# Удаляем предыдущую сборку, если существует
+if [ -d "tensorflow-${TFLITE_VERSION}" ]; then
+    echo "Удаление предыдущей сборки TensorFlow..."
+    rm -rf "tensorflow-${TFLITE_VERSION}"
+fi
+
 wget -q https://github.com/tensorflow/tensorflow/archive/refs/tags/v${TFLITE_VERSION}.tar.gz -O tensorflow.tar.gz
 tar xf tensorflow.tar.gz
 cd tensorflow-${TFLITE_VERSION}
+
+# Удаляем предыдущую сборку tflite
+if [ -d "tflite_build" ]; then
+    echo "Удаление предыдущей сборки tflite..."
+    rm -rf tflite_build
+fi
 
 mkdir tflite_build
 cd tflite_build
@@ -59,6 +71,13 @@ ldconfig
 # Скачивание и распаковка Mesa
 echo "Скачивание Mesa 25.0.3..."
 cd $WORK_DIR
+
+# Удаляем предыдущую сборку Mesa, если существует
+if [ -d "mesa-25.0.3" ]; then
+    echo "Удаление предыдущей сборки Mesa..."
+    rm -rf mesa-25.0.3
+fi
+
 wget -q https://archive.mesa3d.org//mesa-25.0.3.tar.xz
 tar xf mesa-25.0.3.tar.xz
 cd mesa-25.0.3
