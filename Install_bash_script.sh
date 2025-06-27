@@ -7,6 +7,13 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Проверяем версию Meson
+MIN_MESON_VERSION=0.62
+if ! dpkg --compare-versions $(meson --version) ge $MIN_MESON_VERSION; then
+    echo "Обновление Meson..."
+    pip3 install --upgrade meson
+fi
+
 # Установка зависимостей
 apt update
 apt install -y build-essential git meson ninja-build cmake pkg-config \
@@ -81,6 +88,26 @@ fi
 wget -q https://archive.mesa3d.org//mesa-25.0.3.tar.xz
 tar xf mesa-25.0.3.tar.xz
 cd mesa-25.0.3
+
+# Регистрация нового драйвера в системе сборки Mesa
+echo "Регистрация AI Frame Generation драйвера в Mesa..."
+
+# 1. Добавляем опцию для драйвера в meson_options.txt
+if ! grep -q "option('ai-framegen'" meson_options.txt; then
+    cat >> meson_options.txt << 'EOF'
+
+option('ai-framegen',
+        type : 'feature',
+        value : 'disabled',
+        description : 'Enable AI frame generation driver')
+EOF
+fi
+
+# 2. Добавляем драйвер в список Gallium
+sed -i "/option('gallium-drivers',/a \  'ai'," meson_options.txt
+
+# 3. Добавляем зависимость для драйвера
+sed -i "/'zink': _zink_deps,/a \  'ai': [idep_mesautil, driver_ai]," src/gallium/targets/dri/meson.build
 
 # Создание файлов драйвера AI Frame Generation
 echo "Создание AI Frame Generation драйвера..."
