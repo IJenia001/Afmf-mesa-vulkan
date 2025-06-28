@@ -79,7 +79,7 @@ libxcb-util-dev libxshmfence-dev libxxf86vm-dev \
 libxrandr-dev libxrender-dev libxdamage-dev libvulkan-dev \
 clang zlib1g-dev libelf-dev libssl-dev libffi-dev \
 unzip gawk libxml2-dev libopenblas-dev ocl-icd-opencl-dev \
-vulkan-tools libglvnd-dev libegl-dev libgles2-mesa-dev
+vulkan-tools libglvnd-dev libegl-dev libgles2-mesa-dev llvm-spirv-dev 
 
 # Дополнительные пакеты для Python
 apt install -y python3-mako python3-yaml python3-dev
