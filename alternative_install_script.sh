@@ -69,7 +69,7 @@ fi
 # Установка остальных зависимостей
 echo "Установка зависимостей для сборки Mesa..."
 apt install -y bison flex byacc glslang-tools \
-libdrm-dev libclc-20-dev llvm-dev llvm-spirv-dev \
+libdrm-dev libclc-20-dev llvm-dev \
 libclang-dev libunwind-dev libwayland-dev \
 libwayland-egl-backend-dev wayland-protocols \
 libx11-dev libxext-dev libxfixes-dev libxcb-shm0-dev \
